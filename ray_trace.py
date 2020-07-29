@@ -2,14 +2,16 @@ import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import random
+import multiprocessing
 
-w = 200
-h = 200
+threads = multiprocessing.cpu_count()
+
+w = 20*threads
+h = 20*threads
 
 
 def normalize(x):
-    x /= np.linalg.norm(x)
-    return x
+    return x / np.linalg.norm(x)
 
 def intersect_triangle(O, D, a, b, c, epsilon=1e-9):
     N = -1*normalize(np.cross(c-a, b-a))
@@ -110,6 +112,7 @@ def trace_ray(rayO, rayD):
         t_obj = intersect(rayO, rayD, obj)
         if t_obj < t:
             t, obj_idx = t_obj, i
+            break
     # Return None if the ray does not intersect any object.
     if t == np.inf:
         return
@@ -163,15 +166,7 @@ def add_plane(position, normal):
 color_plane0 = 1. * np.ones(3)
 color_plane1 = 0. * np.ones(3)
 
-scene = [add_sphere([0.0, 0.5, 0.0], 0.3, [1, 0, 0]),
-         ]
-
-"""
-scene += [add_triangle([-1.0, 0.0, 0.0], [-1.0, 0.0, 1.0], [1.0, 0.5, 1.0],
-                       [0, 1, 1])]
-scene += [add_triangle([1.0, 0.5, 1.0], [1.0, 0.0, 0.0], [-1.0, 0.0, 0.0],
-                       [0, 1, 1])]
-"""
+scene = [add_sphere([0.0, 0.5, 0.0], 0.3, [1, 0, 0]), ]
 
 def get_rand():
     return 0.0#random.random()/10
@@ -192,20 +187,19 @@ for i in range(-1, 2):
         #break
     #break
 
-scene += [add_plane([0., -2.0, 0.], [0., 1., 0.])]
+#scene += [add_plane([0., -2.0, 0.], [0., 1., 0.])]
 
 # Light position and color.
 L = np.array([5., 5., -10.])
 color_light = np.ones(3)
 
 # Default light and material parameters.
-ambient = .05
+ambient = 0.01
 diffuse_c = 1.
 specular_c = 1.
 specular_k = 50
 
 depth_max = 3  # Maximum number of light reflections.
-col = np.zeros(3)  # Current color.
 O = np.array([0., 1.0, -1.0])  # Camera.
 Q = np.array([0.0, 0.0, 0.])  # Camera pointing to.
 img = np.zeros((h, w, 3))
@@ -214,28 +208,38 @@ r = float(w) / h
 # Screen coordinates: x0, y0, x1, y1.
 S = (-1., -1. / r + .25, 1., 1. / r + .25)
 
+def shade_pixel(x, y, q_z=0, depth_max=3):
+    col = np.zeros(3)
+    Q = np.array([x, y, q_z])
+    D = normalize(Q - O)
+    depth = 0
+    rayO, rayD = O, D
+    reflection = 1.
+    # Loop through initial and secondary rays.
+    while depth < depth_max:
+        traced = trace_ray(rayO, rayD)
+        if not traced:
+            break
+        obj, M, N, col_ray = traced
+        # Reflection: create a new ray.
+        rayO, rayD = M + \
+            N * .0001, normalize(rayD - 2 * np.dot(rayD, N) * N)
+        depth += 1
+        col += reflection * col_ray
+        reflection *= obj.get('reflection', 1.)
+    return np.clip(col, 0, 1)
+
+
 # Loop through all pixels.
 for i, x in tqdm(enumerate(np.linspace(S[0], S[2], w)), total=w):
+    coords = []
+    index_counter = 0
     for j, y in enumerate(np.linspace(S[1], S[3], h)):
-        col[:] = 0
-        Q[:2] = (x, y)
-        D = normalize(Q - O)
-        depth = 0
-        rayO, rayD = O, D
-        reflection = 1.
-        # Loop through initial and secondary rays.
-        while depth < depth_max:
-            traced = trace_ray(rayO, rayD)
-            if not traced:
-                break
-            obj, M, N, col_ray = traced
-            col_ray = np.clip(col_ray, 0, 1)
-            # Reflection: create a new ray.
-            rayO, rayD = M + \
-                N * .0001, normalize(rayD - 2 * np.dot(rayD, N) * N)
-            depth += 1
-            col += reflection * col_ray
-            reflection *= obj.get('reflection', 1.)
-        img[h - j - 1, i, :] = np.clip(col, 0, 1)
+        coords.append([x, y, Q[2], depth_max])
+    with multiprocessing.Pool(processes=9) as pool:
+        results = pool.starmap(shade_pixel, coords)
+    for j, y in enumerate(np.linspace(S[1], S[3], h)):
+        img[h - j - 1, i, :] = results[index_counter]
+        index_counter += 1
 
 plt.imsave('fig.png', img)
