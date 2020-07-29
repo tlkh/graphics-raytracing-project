@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 import random
 import multiprocessing
+import cv2
 
 threads = multiprocessing.cpu_count()
 
@@ -13,8 +14,23 @@ h = 20*threads
 def normalize(x):
     return x / np.linalg.norm(x)
 
+eijk = np.array([[[ 0.,  0.,  0.],
+                  [ 0.,  0.,  1.],
+                  [ 0., -1.,  0.]],
+                 [[ 0.,  0., -1.],
+                  [ 0.,  0.,  0.],
+                  [ 1.,  0.,  0.]],
+                 [[ 0.,  1.,  0.],
+                  [-1.,  0.,  0.],
+                  [ 0.,  0.,  0.]]])
+
+def einsum_cross(u, v):
+    u = np.expand_dims(u, axis=0)
+    v = np.expand_dims(v, axis=0)
+    return np.einsum('ijk,uj,vk->uvi', eijk, u, v)[0, 0, :]
+
 def intersect_triangle(O, D, a, b, c, epsilon=1e-9):
-    N = -1*normalize(np.cross(c-a, b-a))
+    N = -1*normalize(einsum_cross(c-a, b-a))
     d = N.dot(a)
     t_num = d - (N.dot(O))
     t_dem = N.dot(D) + epsilon
@@ -26,19 +42,19 @@ def intersect_triangle(O, D, a, b, c, epsilon=1e-9):
     # check edge 1
     e1 = b - a
     vp1 = P - a
-    c1 = np.cross(e1, vp1)
+    c1 = einsum_cross(e1, vp1)
     if N.dot(c1) < 0:
         return np.inf
     # check edge 2
     e2 = c-b
     vp2 = P-b
-    c2 = np.cross(e2, vp2)
+    c2 = einsum_cross(e2, vp2)
     if N.dot(c2) < 0:
         return np.inf
-    # check edge 1
+    # check edge 3
     e3 = a-c
     vp3 = P - c
-    c3 = np.cross(e3, vp3)
+    c3 = einsum_cross(e3, vp3)
     if N.dot(c3) < 0:
         return np.inf
     return d
@@ -98,10 +114,8 @@ def get_normal(obj, M):
     return N
 
 
-def get_color(obj, M):
+def get_color(obj):
     color = obj['color']
-    if not hasattr(color, '__len__'):
-        color = color(M)
     return color
 
 
@@ -122,7 +136,7 @@ def trace_ray(rayO, rayD):
     M = rayO + rayD * t
     # Find properties of the object.
     N = get_normal(obj, M)
-    color = get_color(obj, M)
+    color = obj.get('color')
     toL = normalize(L - M)
     toO = normalize(O - M)
     # Shadow: find if the point is shadowed or not.
@@ -145,7 +159,7 @@ def add_triangle(a, b, c, color):
     b = np.array(b, dtype=float)
     c = np.array(c, dtype=float)
     return dict(type='triangle', a=a, b=b, c=c,
-                normal=normalize(np.cross(c-a, b-a)),
+                normal=normalize(einsum_cross(c-a, b-a)),
                 color=np.array(color), reflection=0.5)
 
 
@@ -169,7 +183,7 @@ color_plane1 = 0. * np.ones(3)
 scene = [add_sphere([0.0, 0.5, 0.0], 0.3, [1, 0, 0]), ]
 
 def get_rand():
-    return 0.0#random.random()/10
+    return random.random()/10
 
 
 for i in range(-1, 2):
@@ -222,24 +236,31 @@ def shade_pixel(x, y, q_z=0, depth_max=3):
             break
         obj, M, N, col_ray = traced
         # Reflection: create a new ray.
-        rayO, rayD = M + \
-            N * .0001, normalize(rayD - 2 * np.dot(rayD, N) * N)
+        rayO = M + N * .0001
+        rayD = normalize(rayD - 2 * np.dot(rayD, N) * N)
         depth += 1
         col += reflection * col_ray
         reflection *= obj.get('reflection', 1.)
-    return np.clip(col, 0, 1)
+    return col
 
+THREAD = True
 
-# Loop through all pixels.
-for i, x in tqdm(enumerate(np.linspace(S[0], S[2], w)), total=w):
-    coords = []
-    index_counter = 0
-    for j, y in enumerate(np.linspace(S[1], S[3], h)):
-        coords.append([x, y, Q[2], depth_max])
-    with multiprocessing.Pool(processes=9) as pool:
-        results = pool.starmap(shade_pixel, coords)
-    for j, y in enumerate(np.linspace(S[1], S[3], h)):
-        img[h - j - 1, i, :] = results[index_counter]
-        index_counter += 1
+if THREAD:
+    for i, x in tqdm(enumerate(np.linspace(S[0], S[2], w)), total=w):
+        coords = []
+        index_counter = 0
+        for j, y in enumerate(np.linspace(S[1], S[3], h)):
+            coords.append([x, y, Q[2], depth_max])
+        with multiprocessing.Pool(processes=threads) as pool:
+            results = pool.starmap(shade_pixel, coords)
+        for j, y in enumerate(np.linspace(S[1], S[3], h)):
+            img[h - j - 1, i, :] = results[index_counter]
+            index_counter += 1
+else:
+    for i, x in tqdm(enumerate(np.linspace(S[0], S[2], w)), total=w):
+        for j, y in enumerate(np.linspace(S[1], S[3], h)):
+            img[h - j - 1, i, :] = shade_pixel(x, y, Q[2], depth_max)
 
+img = cv2.resize(img, (w*2, h*2), interpolation=cv2.INTER_CUBIC)
+img = np.clip(img, 0.0, 1.0).astype(np.float)
 plt.imsave('fig.png', img)
