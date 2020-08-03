@@ -5,10 +5,11 @@ import random
 import multiprocessing
 import cv2
 
+
 threads = multiprocessing.cpu_count()
 
-w = 20*threads
-h = 20*threads
+w = 100
+h = 100
 
 
 def normalize(x):
@@ -29,11 +30,11 @@ def einsum_cross(u, v):
     v = np.expand_dims(v, axis=0)
     return np.einsum('ijk,uj,vk->uvi', eijk, u, v)[0, 0, :]
 
-def intersect_triangle(O, D, a, b, c, epsilon=1e-9):
+def intersect_triangle(O, D, a, b, c):
     N = -1*normalize(einsum_cross(c-a, b-a))
     d = N.dot(a)
     t_num = d - (N.dot(O))
-    t_dem = N.dot(D) + epsilon
+    t_dem = N.dot(D)
     t = t_num / t_dem
     P = O + t * D
     d = intersect_plane(O, D, P, N)
@@ -59,8 +60,6 @@ def intersect_triangle(O, D, a, b, c, epsilon=1e-9):
         return np.inf
     return d
         
-
-
 def intersect_plane(O, D, P, N):
     # Return the distance from O to the intersection of the ray (O, D) with the
     # plane (P, N), or +inf if there is no intersection.
@@ -89,8 +88,8 @@ def intersect_sphere(O, D, S, R):
         t0 = q / a
         t1 = c / q
         t0, t1 = min(t0, t1), max(t0, t1)
-        if t1 >= 0:
-            return t1 if t0 < 0 else t0
+        if t0 < 0 and t1 > 0:
+            return t1
     return np.inf
 
 
@@ -106,7 +105,7 @@ def intersect(O, D, obj):
 def get_normal(obj, M):
     # Find normal.
     if obj['type'] == 'sphere':
-        N = normalize(M - obj['position'])
+        N = -1*normalize(M - obj['position'])
     elif obj['type'] == 'plane':
         N = obj['normal']
     elif obj['type'] == 'triangle':
@@ -140,10 +139,10 @@ def trace_ray(rayO, rayD):
     toL = normalize(L - M)
     toO = normalize(O - M)
     # Shadow: find if the point is shadowed or not.
-    l = [intersect(M + N * .0001, toL, obj_sh)
-         for k, obj_sh in enumerate(scene) if k != obj_idx]
-    if l and min(l) < np.inf:
-        return
+    #l = [intersect(M + N * .0001, toL, obj_sh)
+    #     for k, obj_sh in enumerate(scene) if k != obj_idx]
+    #if l and min(l) < np.inf:
+    #   return
     # Start computing the color.
     col_ray = ambient
     # Lambert shading (diffuse).
@@ -160,19 +159,20 @@ def add_triangle(a, b, c, color):
     c = np.array(c, dtype=float)
     return dict(type='triangle', a=a, b=b, c=c,
                 normal=normalize(einsum_cross(c-a, b-a)),
-                color=np.array(color), reflection=0.5)
+                color=np.array(color), reflection=0.6,
+                diffuse_c=.1, specular_c=.8)
 
 
 def add_sphere(position, radius, color):
     return dict(type='sphere', position=np.array(position),
-                radius=np.array(radius), color=np.array(color), reflection=.5)
+                radius=np.array(radius), color=np.array(color),
+                diffuse_c=.9, specular_c=.1, reflection=0.1)
 
 
-def add_plane(position, normal):
+def add_plane(position, normal, color):
     return dict(type='plane', position=np.array(position),
                 normal=np.array(normal),
-                color=lambda M: (color_plane0 if (
-                    int(M[0] * 2) % 2) == (int(M[2] * 2) % 2) else color_plane1),
+                color=np.array(color),
                 diffuse_c=.75, specular_c=.5, reflection=.25)
 
 
@@ -180,26 +180,28 @@ def add_plane(position, normal):
 color_plane0 = 1. * np.ones(3)
 color_plane1 = 0. * np.ones(3)
 
-scene = [add_sphere([0.0, 0.5, 0.0], 0.3, [1, 0, 0]), ]
+scene = []
 
 def get_rand():
-    return random.random()/10
+    return random.random()/20.0
 
-
-for i in range(-1, 2):
-    for j in range(-1, 2):
-        print(i, j)
+for i in range(-3, 4):
+    for j in range(-3, 4):
         UL = np.asarray([i+1, j], dtype=float)
         UR = np.asarray([i+1, j+1], dtype=float)
         LL = np.asarray([i, j], dtype=float)
         LR = np.asarray([i, j+1], dtype=float)
         scene += [add_triangle([LL[0], get_rand(), LL[1]], [UL[0], get_rand(), UL[1]], [UR[0], get_rand(), UR[1]],
-                               [0, 1, 1])]
+                               [0, 0.2, 0.3])]
         h_xy = random.random()
         scene += [add_triangle([UR[0], get_rand(), UR[1]], [LR[0], get_rand(), LR[1]], [LL[0], get_rand(), LL[1]],
-                               [0, 1, 1])]
+                               [0, 0.2, 0.3])]
         #break
     #break
+    
+scene += [add_sphere([0.0, 0.0, 0.0], 10.0, [135/255, 206/255, 235/255]), ]
+    
+print("Num objects:", len(scene))
 
 #scene += [add_plane([0., -2.0, 0.], [0., 1., 0.])]
 
@@ -214,8 +216,8 @@ specular_c = 1.
 specular_k = 50
 
 depth_max = 3  # Maximum number of light reflections.
-O = np.array([0., 1.0, -1.0])  # Camera.
-Q = np.array([0.0, 0.0, 0.])  # Camera pointing to.
+O = np.array([0.0, 0.5, -1.0])  # Camera.
+Q = np.array([0.0, 0.0, 0.0])  # Camera pointing to.
 img = np.zeros((h, w, 3))
 
 r = float(w) / h
@@ -228,7 +230,7 @@ def shade_pixel(x, y, q_z=0, depth_max=3):
     D = normalize(Q - O)
     depth = 0
     rayO, rayD = O, D
-    reflection = 1.
+    reflection = 1.0
     # Loop through initial and secondary rays.
     while depth < depth_max:
         traced = trace_ray(rayO, rayD)
@@ -240,7 +242,7 @@ def shade_pixel(x, y, q_z=0, depth_max=3):
         rayD = normalize(rayD - 2 * np.dot(rayD, N) * N)
         depth += 1
         col += reflection * col_ray
-        reflection *= obj.get('reflection', 1.)
+        reflection *= obj.get('reflection')
     return col
 
 THREAD = True
