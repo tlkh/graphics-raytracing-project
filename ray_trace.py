@@ -203,31 +203,33 @@ class Sphere(object):
 scene = []
 
 
-def xWave(j, time, weight):
-    val = math.sin(weight*j+2*time) + math.sin(weight*2*j +
-                                               0.5*time + 1) + math.sin(weight*2*j+time)
+def xWave(j, time, height,squished):
+    val = math.sin(squished*j+2*time) + math.sin(squished*2*j +
+                                               0.5*time + 1) + math.sin(squished*2*j+time)
 
-    return (weight)*val
+    return (height)*val
 
-
-def yWave(j, time, weight):
-    return (weight)*math.sin(weight*j+0.5*time)
-
+def yWave(j, time, height,squished):
+    return height*math.sin(squished*j+0.5*time)
 
 def diaWave(i, j, time, weight):
     return (weight)*math.sin(weight*3*(j - i) + time)
 
-
+# higher val for squish means more the wave more squished
 def gety(i, j, time):
     y = 0
     #y += diaWave(i,j,time,0.3)
     #y += yWave(j,time,0.3)
     #y += xWave(i,time,0.3)
 
-    big = 2.0
+    big = 2
     #y += diaWave(i,j,time,big)
-    #y += yWave(j,time,big)
-    y += xWave(i, time, big)
+    #y += yWave(j,time,15, big)
+    #y += xWave(i, time, big)
+    y += yWave(j,time,5,big)
+    y += xWave(j,time,1,5)
+    y += yWave(i,time,5,big)
+    y += xWave(i,time,1,5)
     return y
 
 
