@@ -9,8 +9,8 @@ import math
 
 threads = multiprocessing.cpu_count()
 
-w = 100
-h = 100
+w = 200
+h = 200
 
 
 def normalize(x):
@@ -141,7 +141,7 @@ def trace_ray(rayO, rayD):
 
 
 class Triangle(object):
-    def __init__(self, a, b, c, color, diffuse_c=0.1, specular_c=0.5, reflection=0.5):
+    def __init__(self, a, b, c, color, diffuse_c=0.5, specular_c=0.5, reflection=0.5):
         self.type = "triangle"
         self.a = np.array(a, dtype=float)
         self.b = np.array(b, dtype=float)
@@ -173,7 +173,7 @@ class Triangle(object):
 
 
 class Sphere(object):
-    def __init__(self, center, radius, color, diffuse_c=.9, specular_c=.1, reflection=0.1):
+    def __init__(self, center, radius, color, diffuse_c=0.9, specular_c=0.01, reflection=0.01):
         self.type = "sphere"
         self.center = np.array(center, dtype=float)
         self.radius = radius
@@ -187,8 +187,10 @@ class Sphere(object):
 
     def get_color(self, coords=None):
         point_color = self.color
-        point_color[0] = coords[1]/5
-        return point_color
+        point_color[2] = coords[1]/3
+        darken = 1.0 - coords[1]/10
+        point_color[0] = darken
+        return darken*np.clip(point_color, 0.0, 1.0)
 
     def get_reflection(self, coords=None):
         return self.reflection
@@ -203,19 +205,23 @@ class Sphere(object):
 scene = []
 
 
-def xWave(j, time, height,squished):
+def xWave(j, time, height, squished):
     val = math.sin(squished*j+2*time) + math.sin(squished*2*j +
-                                               0.5*time + 1) + math.sin(squished*2*j+time)
+                                                 0.5*time + 1) + math.sin(squished*2*j+time)
 
     return (height)*val
 
-def yWave(j, time, height,squished):
+
+def yWave(j, time, height, squished):
     return height*math.sin(squished*j+0.5*time)
+
 
 def diaWave(i, j, time, weight):
     return (weight)*math.sin(weight*3*(j - i) + time)
 
 # higher val for squish means more the wave more squished
+
+
 def gety(i, j, time):
     y = 0
     #y += diaWave(i,j,time,0.3)
@@ -226,18 +232,18 @@ def gety(i, j, time):
     #y += diaWave(i,j,time,big)
     #y += yWave(j,time,15, big)
     #y += xWave(i, time, big)
-    y += yWave(j,time,5,big)
-    y += xWave(j,time,1,5)
-    y += yWave(i,time,5,big)
-    y += xWave(i,time,1,5)
+    y += yWave(j, time, 5, big)
+    y += xWave(j, time, 1, 5)
+    y += yWave(i, time, 5, big)
+    y += xWave(i, time, 1, 5)
     return y
 
 
 time = 1
 denom = 50
 
-x_coords = list(np.linspace(-2.0, 2.0, num=9, endpoint=True))
-y_coords = list(np.linspace(-2.0, 2.0, num=9, endpoint=True))
+x_coords = list(np.linspace(-1.9, 1.9, num=10, endpoint=True))
+y_coords = list(np.linspace(-1.9, 1.9, num=10, endpoint=True))
 
 for i, x in enumerate(x_coords[:-1]):
     for j, y in enumerate(y_coords[:-1]):
@@ -254,22 +260,22 @@ for i, x in enumerate(x_coords[:-1]):
         scene += [Triangle(a=[LL[0], ll, LL[1]],
                            b=[UL[0], ul, UL[1]],
                            c=[UR[0], ur, UR[1]],
-                           color=[0.0, 0.2, 0.3])]
+                           color=[0.0, 0.1, 0.2])]
         scene += [Triangle(a=[UR[0], ur, UR[1]],
                            b=[LR[0], lr, LR[1]],
                            c=[LL[0], ll, LL[1]],
-                           color=[0.0, 0.2, 0.3])]
+                           color=[0.0, 0.1, 0.2])]
         # break
     # break
 
 scene += [Sphere(center=[0.0, 0.0, 0.0],
                  radius=10.0,
-                 color=[135/255, 0.7, 0.8])]
+                 color=[0.7, 0.5, 0.1])]
 
 print("Num objects:", len(scene))
 
 # Light position and color.
-L = np.array([5., 5., -10.])
+L = np.array([0.0, 0.3, 3.0])
 color_light = np.ones(3)
 
 # Default light and material parameters.
@@ -279,7 +285,7 @@ specular_c = 1.
 specular_k = 50
 
 depth_max = 3  # Maximum number of light reflections.
-O = np.array([0.0, 1.0, -2.0])  # Camera.
+O = np.array([0.0, 1.0, -1.0])  # Camera.
 Q = np.array([0.0, 0.0, 0.0])  # Camera pointing to.
 img = np.zeros((h, w, 3))
 
