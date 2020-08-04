@@ -4,6 +4,7 @@ from tqdm import tqdm
 import random
 import multiprocessing
 import cv2
+import math
 
 
 threads = multiprocessing.cpu_count()
@@ -15,20 +16,23 @@ h = 100
 def normalize(x):
     return x / np.linalg.norm(x)
 
-eijk = np.array([[[ 0.,  0.,  0.],
-                  [ 0.,  0.,  1.],
-                  [ 0., -1.,  0.]],
-                 [[ 0.,  0., -1.],
-                  [ 0.,  0.,  0.],
-                  [ 1.,  0.,  0.]],
-                 [[ 0.,  1.,  0.],
+
+eijk = np.array([[[0.,  0.,  0.],
+                  [0.,  0.,  1.],
+                  [0., -1.,  0.]],
+                 [[0.,  0., -1.],
+                  [0.,  0.,  0.],
+                  [1.,  0.,  0.]],
+                 [[0.,  1.,  0.],
                   [-1.,  0.,  0.],
-                  [ 0.,  0.,  0.]]])
+                  [0.,  0.,  0.]]])
+
 
 def einsum_cross(u, v):
     u = np.expand_dims(u, axis=0)
     v = np.expand_dims(v, axis=0)
     return np.einsum('ijk,uj,vk->uvi', eijk, u, v)[0, 0, :]
+
 
 def intersect_triangle(O, D, a, b, c):
     N = -1*normalize(einsum_cross(c-a, b-a))
@@ -59,7 +63,8 @@ def intersect_triangle(O, D, a, b, c):
     if N.dot(c3) < 0:
         return np.inf
     return d
-        
+
+
 def intersect_plane(O, D, P, N):
     # Return the distance from O to the intersection of the ray (O, D) with the
     # plane (P, N), or +inf if there is no intersection.
@@ -94,28 +99,10 @@ def intersect_sphere(O, D, S, R):
 
 
 def intersect(O, D, obj):
-    if obj['type'] == 'plane':
-        return intersect_plane(O, D, obj['position'], obj['normal'])
-    elif obj['type'] == 'sphere':
-        return intersect_sphere(O, D, obj['position'], obj['radius'])
-    elif obj['type'] == 'triangle':
-        return intersect_triangle(O, D, obj['a'], obj['b'], obj['c'])
-
-
-def get_normal(obj, M):
-    # Find normal.
-    if obj['type'] == 'sphere':
-        N = -1*normalize(M - obj['position'])
-    elif obj['type'] == 'plane':
-        N = obj['normal']
-    elif obj['type'] == 'triangle':
-        N = obj['normal']
-    return N
-
-
-def get_color(obj):
-    color = obj['color']
-    return color
+    if obj.type == 'sphere':
+        return intersect_sphere(O, D, obj.center, obj.radius)
+    elif obj.type == 'triangle':
+        return intersect_triangle(O, D, obj.a, obj.b, obj.c)
 
 
 def trace_ray(rayO, rayD):
@@ -134,76 +121,150 @@ def trace_ray(rayO, rayD):
     # Find the point of intersection on the object.
     M = rayO + rayD * t
     # Find properties of the object.
-    N = get_normal(obj, M)
-    color = obj.get('color')
+    N = obj.get_normal(M)
+    color = obj.get_color(M)
     toL = normalize(L - M)
     toO = normalize(O - M)
     # Shadow: find if the point is shadowed or not.
-    #l = [intersect(M + N * .0001, toL, obj_sh)
+    # l = [intersect(M + N * .0001, toL, obj_sh)
     #     for k, obj_sh in enumerate(scene) if k != obj_idx]
-    #if l and min(l) < np.inf:
+    # if l and min(l) < np.inf:
     #   return
     # Start computing the color.
     col_ray = ambient
     # Lambert shading (diffuse).
-    col_ray += obj.get('diffuse_c', diffuse_c) * max(np.dot(N, toL), 0) * color
+    col_ray += obj.get_diffuse_c() * max(np.dot(N, toL), 0) * color
     # Blinn-Phong shading (specular).
-    col_ray += obj.get('specular_c', specular_c) * max(np.dot(N,
-                                                              normalize(toL + toO)), 0) ** specular_k * color_light
+    col_ray += obj.get_specular_c() * max(np.dot(N, normalize(toL + toO)),
+                                          0) ** specular_k * color_light
     return obj, M, N, col_ray
 
 
-def add_triangle(a, b, c, color):
-    a = np.array(a, dtype=float)
-    b = np.array(b, dtype=float)
-    c = np.array(c, dtype=float)
-    return dict(type='triangle', a=a, b=b, c=c,
-                normal=normalize(einsum_cross(c-a, b-a)),
-                color=np.array(color), reflection=0.6,
-                diffuse_c=.1, specular_c=.8)
+class Triangle(object):
+    def __init__(self, a, b, c, color, diffuse_c=0.1, specular_c=0.5, reflection=0.5):
+        self.type = "triangle"
+        self.a = np.array(a, dtype=float)
+        self.b = np.array(b, dtype=float)
+        self.c = np.array(c, dtype=float)
+        self.normal = self.compute_normal()
+        self.color = np.array(color, dtype=float)
+        self.reflection = reflection
+        self.diffuse_c = diffuse_c
+        self.specular_c = specular_c
+
+    def compute_normal(self):
+        return normalize(einsum_cross(self.c-self.a,
+                                      self.b-self.a))
+
+    def get_normal(self, coords=None):
+        return self.normal
+
+    def get_color(self, coords=None):
+        return self.color
+
+    def get_reflection(self, coords=None):
+        return self.reflection
+
+    def get_diffuse_c(self, coords=None):
+        return self.diffuse_c
+
+    def get_specular_c(self, coords=None):
+        return self.specular_c
 
 
-def add_sphere(position, radius, color):
-    return dict(type='sphere', position=np.array(position),
-                radius=np.array(radius), color=np.array(color),
-                diffuse_c=.9, specular_c=.1, reflection=0.1)
+class Sphere(object):
+    def __init__(self, center, radius, color, diffuse_c=.9, specular_c=.1, reflection=0.1):
+        self.type = "sphere"
+        self.center = np.array(center, dtype=float)
+        self.radius = radius
+        self.color = np.array(color, dtype=float)
+        self.reflection = reflection
+        self.diffuse_c = diffuse_c
+        self.specular_c = specular_c
 
+    def get_normal(self, coords):
+        return -1.0 * normalize(coords - self.center)
 
-def add_plane(position, normal, color):
-    return dict(type='plane', position=np.array(position),
-                normal=np.array(normal),
-                color=np.array(color),
-                diffuse_c=.75, specular_c=.5, reflection=.25)
+    def get_color(self, coords=None):
+        point_color = self.color
+        point_color[0] = coords[1]/5
+        return point_color
 
+    def get_reflection(self, coords=None):
+        return self.reflection
 
-# List of objects.
-color_plane0 = 1. * np.ones(3)
-color_plane1 = 0. * np.ones(3)
+    def get_diffuse_c(self, coords=None):
+        return self.diffuse_c
+
+    def get_specular_c(self, coords=None):
+        return self.specular_c
+
 
 scene = []
 
-def get_rand():
-    return random.random()/20.0
 
-for i in range(-3, 4):
-    for j in range(-3, 4):
-        UL = np.asarray([i+1, j], dtype=float)
-        UR = np.asarray([i+1, j+1], dtype=float)
-        LL = np.asarray([i, j], dtype=float)
-        LR = np.asarray([i, j+1], dtype=float)
-        scene += [add_triangle([LL[0], get_rand(), LL[1]], [UL[0], get_rand(), UL[1]], [UR[0], get_rand(), UR[1]],
-                               [0, 0.2, 0.3])]
-        h_xy = random.random()
-        scene += [add_triangle([UR[0], get_rand(), UR[1]], [LR[0], get_rand(), LR[1]], [LL[0], get_rand(), LL[1]],
-                               [0, 0.2, 0.3])]
-        #break
-    #break
-    
-scene += [add_sphere([0.0, 0.0, 0.0], 10.0, [135/255, 206/255, 235/255]), ]
-    
+def xWave(j, time, weight):
+    val = math.sin(weight*j+2*time) + math.sin(weight*2*j +
+                                               0.5*time + 1) + math.sin(weight*2*j+time)
+
+    return (weight)*val
+
+
+def yWave(j, time, weight):
+    return (weight)*math.sin(weight*j+0.5*time)
+
+
+def diaWave(i, j, time, weight):
+    return (weight)*math.sin(weight*3*(j - i) + time)
+
+
+def gety(i, j, time):
+    y = 0
+    #y += diaWave(i,j,time,0.3)
+    #y += yWave(j,time,0.3)
+    #y += xWave(i,time,0.3)
+
+    big = 2.0
+    #y += diaWave(i,j,time,big)
+    #y += yWave(j,time,big)
+    y += xWave(i, time, big)
+    return y
+
+
+time = 1
+denom = 50
+
+x_coords = list(np.linspace(-2.0, 2.0, num=9, endpoint=True))
+y_coords = list(np.linspace(-2.0, 2.0, num=9, endpoint=True))
+
+for i, x in enumerate(x_coords[:-1]):
+    for j, y in enumerate(y_coords[:-1]):
+        UL = np.asarray([x_coords[i+1], y], dtype=float)
+        UR = np.asarray([x_coords[i+1], y_coords[j+1]], dtype=float)
+        LL = np.asarray([x, y], dtype=float)
+        LR = np.asarray([x, y_coords[j+1]], dtype=float)
+
+        ul = gety(x_coords[i+1], y, time)/denom
+        ur = gety(x_coords[i+1], y_coords[j+1], time)/denom
+        ll = gety(x, y, time)/denom
+        lr = gety(x, y_coords[j+1], time)/denom
+
+        scene += [Triangle(a=[LL[0], ll, LL[1]],
+                           b=[UL[0], ul, UL[1]],
+                           c=[UR[0], ur, UR[1]],
+                           color=[0.0, 0.2, 0.3])]
+        scene += [Triangle(a=[UR[0], ur, UR[1]],
+                           b=[LR[0], lr, LR[1]],
+                           c=[LL[0], ll, LL[1]],
+                           color=[0.0, 0.2, 0.3])]
+        # break
+    # break
+
+scene += [Sphere(center=[0.0, 0.0, 0.0],
+                 radius=10.0,
+                 color=[135/255, 0.7, 0.8])]
+
 print("Num objects:", len(scene))
-
-#scene += [add_plane([0., -2.0, 0.], [0., 1., 0.])]
 
 # Light position and color.
 L = np.array([5., 5., -10.])
@@ -216,13 +277,14 @@ specular_c = 1.
 specular_k = 50
 
 depth_max = 3  # Maximum number of light reflections.
-O = np.array([0.0, 0.5, -1.0])  # Camera.
+O = np.array([0.0, 1.0, -2.0])  # Camera.
 Q = np.array([0.0, 0.0, 0.0])  # Camera pointing to.
 img = np.zeros((h, w, 3))
 
 r = float(w) / h
 # Screen coordinates: x0, y0, x1, y1.
 S = (-1., -1. / r + .25, 1., 1. / r + .25)
+
 
 def shade_pixel(x, y, q_z=0, depth_max=3):
     col = np.zeros(3)
@@ -242,8 +304,9 @@ def shade_pixel(x, y, q_z=0, depth_max=3):
         rayD = normalize(rayD - 2 * np.dot(rayD, N) * N)
         depth += 1
         col += reflection * col_ray
-        reflection *= obj.get('reflection')
+        reflection *= obj.get_reflection()
     return col
+
 
 THREAD = True
 
