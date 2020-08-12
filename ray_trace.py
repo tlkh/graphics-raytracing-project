@@ -3,7 +3,6 @@ import multiprocessing
 import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm, trange
-import random
 import cv2
 import math
 import ops
