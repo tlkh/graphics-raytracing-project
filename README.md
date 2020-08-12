@@ -43,7 +43,7 @@ python3 ray_trace.py --mirrorball --width 256 --height 256
 
 ### Command line options
 
-```shell
+```
   -h, --help            show this help message and exit
   --width WIDTH         Width of output image
   --height HEIGHT       Height of output image
